@@ -21,3 +21,12 @@ jobs:
           git diff --cached --quiet && echo "No change" && exit 0
           git commit -m "deploy: openclaw $(echo ${{ github.sha }} | cut -c1-8)"
           git push
+
+      - name: Trigger Railway redeploy
+        run: |
+          curl -s -X POST "https://backboard.railway.com/graphql/v2" \
+            -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"mutation { serviceInstanceRedeploy(serviceId: \"28f77607-9c57-4a57-bd67-cf210969047b\") }"}' \
+            -o /dev/null -w "HTTP %{http_code}\n"
+          echo "Railway redeploy triggered"
