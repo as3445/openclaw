@@ -30,12 +30,12 @@ import {
 } from "./internal.js";
 import { type MemoryFileEntry } from "./internal.js";
 import { ensureMemoryIndexSchema } from "./memory-schema.js";
+import type { SessionFileEntry } from "./session-files.js";
 import {
   buildSessionEntry,
   listSessionFilesForAgent,
   sessionPathForFile,
 } from "./session-files.js";
-import type { SessionFileEntry } from "./session-files.js";
 import { loadSqliteVecExtension } from "./sqlite-vec.js";
 import { requireNodeSqlite } from "./sqlite.js";
 import type { MemorySource, MemorySyncProgressUpdate } from "./types.js";
@@ -81,7 +81,7 @@ function shouldIgnoreMemoryWatchPath(watchPath: string): boolean {
   return parts.some((segment) => IGNORED_MEMORY_WATCH_DIR_NAMES.has(segment));
 }
 
-abstract class MemoryManagerSyncOps {
+export abstract class MemoryManagerSyncOps {
   protected abstract readonly cfg: OpenClawConfig;
   protected abstract readonly agentId: string;
   protected abstract readonly workspaceDir: string;
@@ -149,7 +149,7 @@ abstract class MemoryManagerSyncOps {
     options: { source: MemorySource; content?: string },
   ): Promise<void>;
 
-  private async ensureVectorReady(dimensions?: number): Promise<boolean> {
+  protected async ensureVectorReady(dimensions?: number): Promise<boolean> {
     if (!this.vector.enabled) {
       return false;
     }
@@ -334,7 +334,7 @@ abstract class MemoryManagerSyncOps {
     await Promise.all(suffixes.map((suffix) => fs.rm(`${basePath}${suffix}`, { force: true })));
   }
 
-  private ensureSchema() {
+  protected ensureSchema() {
     const result = ensureMemoryIndexSchema({
       db: this.db,
       embeddingCacheTable: EMBEDDING_CACHE_TABLE,
@@ -392,7 +392,7 @@ abstract class MemoryManagerSyncOps {
     this.watcher.on("unlink", markDirty);
   }
 
-  private ensureSessionListener() {
+  protected ensureSessionListener() {
     if (!this.sources.has("sessions") || this.sessionUnsubscribe) {
       return;
     }
@@ -827,7 +827,7 @@ abstract class MemoryManagerSyncOps {
     return state;
   }
 
-  private async runSync(params?: {
+  protected async runSync(params?: {
     reason?: string;
     force?: boolean;
     progress?: (update: MemorySyncProgressUpdate) => void;
@@ -910,7 +910,7 @@ abstract class MemoryManagerSyncOps {
     return /embedding|embeddings|batch/i.test(message);
   }
 
-  private resolveBatchConfig(): {
+  protected resolveBatchConfig(): {
     enabled: boolean;
     wait: boolean;
     concurrency: number;
@@ -1141,7 +1141,7 @@ abstract class MemoryManagerSyncOps {
     this.sessionsDirtyFiles.clear();
   }
 
-  private readMeta(): MemoryIndexMeta | null {
+  protected readMeta(): MemoryIndexMeta | null {
     const row = this.db.prepare(`SELECT value FROM meta WHERE key = ?`).get(META_KEY) as
       | { value: string }
       | undefined;
@@ -1155,7 +1155,7 @@ abstract class MemoryManagerSyncOps {
     }
   }
 
-  private writeMeta(meta: MemoryIndexMeta) {
+  protected writeMeta(meta: MemoryIndexMeta) {
     const value = JSON.stringify(meta);
     this.db
       .prepare(
@@ -1164,5 +1164,3 @@ abstract class MemoryManagerSyncOps {
       .run(META_KEY, value);
   }
 }
-
-export const memoryManagerSyncOps = MemoryManagerSyncOps.prototype;

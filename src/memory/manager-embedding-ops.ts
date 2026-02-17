@@ -1,7 +1,4 @@
 import fs from "node:fs/promises";
-import type { DatabaseSync } from "node:sqlite";
-import { type FSWatcher } from "chokidar";
-import type { ResolvedMemorySearchConfig } from "../agents/memory-search.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { runGeminiEmbeddingBatches, type GeminiBatchRequest } from "./batch-gemini.js";
 import {
@@ -13,12 +10,6 @@ import { type VoyageBatchRequest, runVoyageEmbeddingBatches } from "./batch-voya
 import { enforceEmbeddingMaxInputTokens } from "./embedding-chunk-limits.js";
 import { estimateUtf8Bytes } from "./embedding-input-limits.js";
 import {
-  type EmbeddingProvider,
-  type GeminiEmbeddingClient,
-  type OpenAiEmbeddingClient,
-  type VoyageEmbeddingClient,
-} from "./embeddings.js";
-import {
   chunkMarkdown,
   hashText,
   parseEmbedding,
@@ -26,6 +17,7 @@ import {
   type MemoryChunk,
   type MemoryFileEntry,
 } from "./internal.js";
+import { MemoryManagerSyncOps } from "./manager-sync-ops.js";
 import type { SessionFileEntry } from "./session-files.js";
 import type { MemorySource } from "./types.js";
 
@@ -48,61 +40,11 @@ const vectorToBlob = (embedding: number[]): Buffer =>
 
 const log = createSubsystemLogger("memory");
 
-abstract class MemoryManagerEmbeddingOps {
-  protected abstract readonly agentId: string;
-  protected abstract readonly workspaceDir: string;
-  protected abstract readonly settings: ResolvedMemorySearchConfig;
-  protected provider: EmbeddingProvider | null = null;
-  protected fallbackFrom?: "openai" | "local" | "gemini" | "voyage";
-  protected openAi?: OpenAiEmbeddingClient;
-  protected gemini?: GeminiEmbeddingClient;
-  protected voyage?: VoyageEmbeddingClient;
-  protected abstract batch: {
-    enabled: boolean;
-    wait: boolean;
-    concurrency: number;
-    pollIntervalMs: number;
-    timeoutMs: number;
-  };
-  protected readonly sources: Set<MemorySource> = new Set();
-  protected providerKey: string | null = null;
-  protected abstract readonly vector: {
-    enabled: boolean;
-    available: boolean | null;
-    extensionPath?: string;
-    loadError?: string;
-    dims?: number;
-  };
-  protected readonly fts: {
-    enabled: boolean;
-    available: boolean;
-    loadError?: string;
-  } = { enabled: false, available: false };
-  protected vectorReady: Promise<boolean> | null = null;
-  protected watcher: FSWatcher | null = null;
-  protected watchTimer: NodeJS.Timeout | null = null;
-  protected sessionWatchTimer: NodeJS.Timeout | null = null;
-  protected sessionUnsubscribe: (() => void) | null = null;
-  protected fallbackReason?: string;
-  protected intervalTimer: NodeJS.Timeout | null = null;
-  protected closed = false;
-  protected dirty = false;
-  protected sessionsDirty = false;
-  protected sessionsDirtyFiles = new Set<string>();
-  protected sessionPendingFiles = new Set<string>();
-  protected sessionDeltas = new Map<
-    string,
-    { lastSize: number; pendingBytes: number; pendingMessages: number }
-  >();
-
-  protected batchFailureCount = 0;
-  protected batchFailureLastError?: string;
-  protected batchFailureLastProvider?: string;
-  protected batchFailureLock: Promise<void> = Promise.resolve();
-
-  protected abstract readonly cache: { enabled: boolean; maxEntries?: number };
-  protected abstract db: DatabaseSync;
-  protected abstract ensureVectorReady(dimensions?: number): Promise<boolean>;
+export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
+  protected abstract batchFailureCount: number;
+  protected abstract batchFailureLastError?: string;
+  protected abstract batchFailureLastProvider?: string;
+  protected abstract batchFailureLock: Promise<void>;
 
   private buildEmbeddingBatches(chunks: MemoryChunk[]): MemoryChunk[][] {
     const batches: MemoryChunk[][] = [];
@@ -204,7 +146,7 @@ abstract class MemoryManagerEmbeddingOps {
     }
   }
 
-  private pruneEmbeddingCacheIfNeeded(): void {
+  protected pruneEmbeddingCacheIfNeeded(): void {
     if (!this.cache.enabled) {
       return;
     }
@@ -416,7 +358,11 @@ abstract class MemoryManagerEmbeddingOps {
       concurrency: this.batch.concurrency,
       pollIntervalMs: this.batch.pollIntervalMs,
       timeoutMs: this.batch.timeoutMs,
-      debug: (message, data) => log.debug(message, { ...data, source, chunks: chunks.length }),
+      debug: (message, data) =>
+        log.debug(
+          message,
+          data ? { ...data, source, chunks: chunks.length } : { source, chunks: chunks.length },
+        ),
     };
   }
 
@@ -553,7 +499,7 @@ abstract class MemoryManagerEmbeddingOps {
     return embeddings;
   }
 
-  private async embedBatchWithRetry(texts: string[]): Promise<number[][]> {
+  protected async embedBatchWithRetry(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) {
       return [];
     }
@@ -606,7 +552,7 @@ abstract class MemoryManagerEmbeddingOps {
     return isLocal ? EMBEDDING_BATCH_TIMEOUT_LOCAL_MS : EMBEDDING_BATCH_TIMEOUT_REMOTE_MS;
   }
 
-  private async embedQueryWithTimeout(text: string): Promise<number[]> {
+  protected async embedQueryWithTimeout(text: string): Promise<number[]> {
     if (!this.provider) {
       throw new Error("Cannot embed query in FTS-only mode (no embedding provider)");
     }
@@ -619,7 +565,7 @@ abstract class MemoryManagerEmbeddingOps {
     );
   }
 
-  private async withTimeout<T>(
+  protected async withTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number,
     message: string,
@@ -747,11 +693,11 @@ abstract class MemoryManagerEmbeddingOps {
     }
   }
 
-  private getIndexConcurrency(): number {
+  protected getIndexConcurrency(): number {
     return this.batch.enabled ? this.batch.concurrency : EMBEDDING_INDEX_CONCURRENCY;
   }
 
-  private async indexFile(
+  protected async indexFile(
     entry: MemoryFileEntry | SessionFileEntry,
     options: { source: MemorySource; content?: string },
   ) {
@@ -865,5 +811,3 @@ abstract class MemoryManagerEmbeddingOps {
       .run(entry.path, options.source, entry.hash, entry.mtimeMs, entry.size);
   }
 }
-
-export const memoryManagerEmbeddingOps = MemoryManagerEmbeddingOps.prototype;
