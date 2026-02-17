@@ -16,6 +16,13 @@ RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
       rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
+# Install Railway CLI for deployment management
+ARG OPENCLAW_INSTALL_RAILWAY_CLI=""
+RUN if [ -n "$OPENCLAW_INSTALL_RAILWAY_CLI" ]; then \
+      npm install -g @railway/cli && \
+      npm cache clean --force; \
+    fi
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY ui/package.json ./ui/package.json
 COPY patches ./patches
