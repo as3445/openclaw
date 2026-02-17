@@ -18,6 +18,7 @@ import {
 } from "../config/config.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { clearAgentRunContext, onAgentEvent } from "../infra/agent-events.js";
+import { startBackupScheduler } from "../infra/backup-scheduler.js";
 import {
   ensureControlUiAssetsBuilt,
   resolveControlUiRootOverrideSync,
@@ -514,6 +515,12 @@ export async function startGatewayServer(
 
   if (!minimalTestGateway) {
     void cron.start().catch((err) => logCron.error(`failed to start: ${String(err)}`));
+    // Start backup scheduler if backup is configured
+    if (cfgAtStart.backup?.enabled) {
+      void startBackupScheduler(cfgAtStart).catch((err) =>
+        log.error(`failed to start backup scheduler: ${String(err)}`),
+      );
+    }
   }
 
   // Recover pending outbound deliveries from previous crash/restart.
