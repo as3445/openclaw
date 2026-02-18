@@ -25,6 +25,7 @@ export type SpawnSubagentParams = {
   thinking?: string;
   runTimeoutSeconds?: number;
   cleanup?: "delete" | "keep";
+  expectsCompletionMessage?: boolean;
 };
 
 export type SpawnSubagentContext = {
@@ -40,7 +41,7 @@ export type SpawnSubagentContext = {
 };
 
 export const SUBAGENT_SPAWN_ACCEPTED_NOTE =
-  "auto-announces on completion, do not poll/sleep. The response will be sent back as a user message.";
+  "auto-announces on completion, do not poll/sleep. The response will be sent back as an agent message.";
 
 export type SpawnSubagentResult = {
   status: "accepted" | "forbidden" | "error";
@@ -318,6 +319,7 @@ export async function spawnSubagentDirect(
     label: label || undefined,
     model: resolvedModel,
     runTimeoutSeconds,
+    expectsCompletionMessage: params.expectsCompletionMessage === true,
   });
 
   return {
