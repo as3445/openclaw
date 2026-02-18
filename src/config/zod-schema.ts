@@ -4,6 +4,7 @@ import { parseDurationMs } from "../cli/parse-duration.js";
 import { ToolsSchema } from "./zod-schema.agent-runtime.js";
 import { AgentsSchema, AudioSchema, BindingsSchema, BroadcastSchema } from "./zod-schema.agents.js";
 import { ApprovalsSchema } from "./zod-schema.approvals.js";
+import { BackupConfigSchema } from "./zod-schema.backup.js";
 import {
   HexColorSchema,
   ModelsConfigSchema,
@@ -877,6 +878,7 @@ export const OpenClawSchema = z
       .optional(),
     memory: MemorySchema,
     mcp: McpConfigSchema,
+    backup: BackupConfigSchema,
     skills: z
       .object({
         allowBundled: z.array(z.string()).optional(),
