@@ -30,10 +30,11 @@ jobs:
           RESPONSE=$(curl -s -X POST "https://backboard.railway.com/graphql/v2" \
             -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"query":"mutation { serviceInstanceRedeploy(serviceId: \"28f77607-9c57-4a57-bd67-cf210969047b\", environmentId: \"20bf8488-1e1e-4534-96c6-1bea4e098208\") }"}')
+            -d '{"query":"mutation { serviceInstanceRedeploy(serviceId: \\"53445341-b553-4aa6-84a9-4b807959df68\\", environmentId: \\"20bf8488-1e1e-4534-96c6-1bea4e098208\\") }"}')
           echo "Railway response: $RESPONSE"
           if echo "$RESPONSE" | grep -q '"errors"'; then
-            echo "::warning::Railway redeploy may have failed. Check Railway dashboard."
+            echo "::error::Railway redeploy failed: $RESPONSE"
+            exit 1
           else
             echo "Railway redeploy triggered successfully"
           fi
