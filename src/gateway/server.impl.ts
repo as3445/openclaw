@@ -23,6 +23,7 @@ import { formatConfigIssueLines } from "../config/issue-format.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
 import { clearAgentRunContext, onAgentEvent } from "../infra/agent-events.js";
+import { startBackupScheduler, stopBackupScheduler } from "../infra/backup-scheduler.js";
 import {
   ensureControlUiAssetsBuilt,
   isPackageProvenControlUiRootSync,
@@ -1009,6 +1010,14 @@ export async function startGatewayServer(
 
   if (!minimalTestGateway) {
     void cron.start().catch((err) => logCron.error(`failed to start: ${String(err)}`));
+    // Start backup scheduler if backup is configured
+    if (cfgAtStart.backup?.enabled) {
+      try {
+        startBackupScheduler(cfgAtStart);
+      } catch (err) {
+        log.error(`failed to start backup scheduler: ${String(err)}`);
+      }
+    }
   }
 
   const stopModelPricingRefresh =
@@ -1338,6 +1347,8 @@ export async function startGatewayServer(
       if (diagnosticsEnabled) {
         stopDiagnosticHeartbeat();
       }
+      // Stop the backup scheduler so in-flight backups are not abandoned.
+      stopBackupScheduler();
       if (skillsRefreshTimer) {
         clearTimeout(skillsRefreshTimer);
         skillsRefreshTimer = null;
