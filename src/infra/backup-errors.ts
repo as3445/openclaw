@@ -7,11 +7,8 @@ export class BackupError extends Error {
     message: string,
     public readonly cause?: Error,
   ) {
-    super(message);
+    super(message, cause ? { cause } : undefined);
     this.name = "BackupError";
-    if (cause) {
-      this.stack = `${this.stack}\nCaused by: ${cause.stack}`;
-    }
   }
 }
 
@@ -20,11 +17,8 @@ export class EncryptionError extends Error {
     message: string,
     public readonly cause?: Error,
   ) {
-    super(message);
+    super(message, cause ? { cause } : undefined);
     this.name = "EncryptionError";
-    if (cause) {
-      this.stack = `${this.stack}\nCaused by: ${cause.stack}`;
-    }
   }
 }
 
@@ -34,10 +28,7 @@ export class S3Error extends Error {
     public readonly s3ErrorCode?: string,
     public readonly cause?: Error,
   ) {
-    super(message);
+    super(message, cause ? { cause } : undefined);
     this.name = "S3Error";
-    if (cause) {
-      this.stack = `${this.stack}\nCaused by: ${cause.stack}`;
-    }
   }
 }

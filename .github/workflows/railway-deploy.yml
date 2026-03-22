@@ -3,6 +3,7 @@ name: Trigger Railway Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   trigger-deploy:
@@ -24,9 +25,15 @@ jobs:
 
       - name: Trigger Railway redeploy
         run: |
-          curl -s -X POST "https://backboard.railway.com/graphql/v2" \
+          HTTP_STATUS=$(curl -s -o /tmp/railway-response.json -w "%{http_code}" \
+            -X POST "https://backboard.railway.com/graphql/v2" \
             -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"query":"mutation { serviceInstanceRedeploy(serviceId: \"28f77607-9c57-4a57-bd67-cf210969047b\") }"}' \
-            -o /dev/null -w "HTTP %{http_code}\n"
-          echo "Railway redeploy triggered"
+            -d '{"query":"mutation { serviceInstanceRedeploy(environmentId: \"${{ secrets.RAILWAY_ENVIRONMENT_ID }}\", serviceId: \"53445341-b553-4aa6-84a9-4b807959df68\") }"}')
+          echo "HTTP status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "Railway redeploy failed with HTTP $HTTP_STATUS"
+            cat /tmp/railway-response.json
+            exit 1
+          fi
+          echo "Railway redeploy triggered successfully"

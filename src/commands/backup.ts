@@ -13,20 +13,18 @@ import {
 } from "../infra/backup-create.js";
 import { getBackupScheduler } from "../infra/backup-scheduler.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
 import { backupVerifyCommand } from "./backup-verify.js";
 export type { BackupCreateOptions, BackupCreateResult } from "../infra/backup-create.js";
 
-const _log = createSubsystemLogger("backup/cli");
-
 interface BackupCommandOptions {
   json?: boolean;
   key?: string;
   targetDir?: string;
   timeout?: number;
+  force?: boolean;
 }
 
 export async function backupCreateCommand(
@@ -63,6 +61,7 @@ export function registerBackupCommands(program: Command): void {
     .command("now")
     .description("Create a backup immediately")
     .option("--json", "Output machine-readable JSON")
+    .option("--force", "Force backup even if schedule has not elapsed")
     .action(async (opts) => {
       await backupCommand("now", opts, defaultRuntime);
     });
@@ -252,9 +251,10 @@ async function backupRestoreCommand(
     throw new Error("backup key required for restore (use --key <backup-key>)");
   }
 
-  const targetDir = opts.targetDir;
-  if (!targetDir) {
-    throw new Error("target directory required for restore (use --target-dir <path>)");
+  const targetDir = opts.targetDir || path.join(os.tmpdir(), `openclaw-restore-${Date.now()}`);
+
+  if (!opts.targetDir) {
+    runtime.log(`No --target-dir specified; restoring to ${targetDir}`);
   }
 
   const run = async () => {

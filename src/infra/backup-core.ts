@@ -18,6 +18,7 @@ import {
 import { Upload } from "@aws-sdk/lib-storage";
 import * as tar from "tar";
 import { z } from "zod";
+import { resolveStateDir } from "../config/paths.js";
 import type { BackupConfig } from "../config/types.backup.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { BackupError, EncryptionError, S3Error } from "./backup-errors.js";
@@ -144,6 +145,7 @@ export async function createBackupTarball(options: {
   const tarStream = tar.create(
     {
       gzip: false, // We'll handle compression separately for streaming
+      portable: true, // Produce portable archives for cross-platform restores
       filter: (filePath: string) => {
         const shouldExclude = EXCLUDE_PATTERNS.some((pattern) => pattern.test(filePath));
         if (shouldExclude) {
@@ -691,8 +693,8 @@ export async function performBackup(config: BackupConfig): Promise<{
 
   try {
     // Determine paths to include based on config
-    const stateDir = path.resolve(os.homedir(), ".openclaw"); // Default state directory
-    const workspaceDir = config.include.workspace ? process.cwd() : undefined; // Current working directory
+    const stateDir = resolveStateDir();
+    const workspaceDir = config.include.workspace ? process.cwd() : undefined;
     const extraPaths = config.include.extraPaths || [];
 
     // Create tarball (result is logged internally)

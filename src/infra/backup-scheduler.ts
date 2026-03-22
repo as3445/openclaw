@@ -32,6 +32,11 @@ export class BackupScheduler {
     this.config = config;
   }
 
+  /** Returns the current config used by this scheduler. */
+  getConfig(): OpenClawConfig {
+    return this.config;
+  }
+
   start(): void {
     const backupCfg = this.config.backup;
     if (!backupCfg?.enabled) {
@@ -199,7 +204,7 @@ export function getBackupScheduler(config: OpenClawConfig): BackupScheduler {
   if (globalScheduler) {
     // Detect config drift and reinitialise when the backup-relevant
     // settings have changed since the scheduler was first created.
-    const prev = globalScheduler["config"].backup;
+    const prev = globalScheduler.getConfig().backup;
     const next = config.backup;
     const changed =
       prev?.enabled !== next?.enabled ||
