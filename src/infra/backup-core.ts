@@ -13,6 +13,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  type _Object,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import * as tar from "tar";
@@ -80,14 +81,14 @@ const ENCRYPTION_ITERATIONS = 100000;
 const EXCLUDE_PATTERNS = [/node_modules$/, /\.git$/, /\.sqlite-wal$/, /\.sqlite-shm$/];
 
 /**
- * Module-level S3Client cache keyed by "endpoint|bucket" so we reuse
+ * Module-level S3Client cache keyed by "endpoint|bucket|accessKeyId" so we reuse
  * clients across calls instead of constructing a new instance per
  * invocation of listBackups, downloadBackup, etc.
  */
 const s3ClientCache = new Map<string, S3Client>();
 
 function getOrCreateS3Client(config: S3StorageConfig): S3Client {
-  const cacheKey = `${config.endpoint}|${config.bucket}`;
+  const cacheKey = `${config.endpoint}|${config.bucket}|${config.accessKeyId}`;
   let client = s3ClientCache.get(cacheKey);
   if (!client) {
     client = new S3Client({
@@ -112,7 +113,7 @@ export async function createBackupTarball(options: {
   workspaceDir?: string;
   extraPaths?: string[];
   outputPath: string;
-}): Promise<{ path: string; sizeBytes: number; fileCount: number }> {
+}): Promise<{ path: string; sizeBytes: number; inputPathCount: number }> {
   const { stateDir, workspaceDir, extraPaths = [], outputPath } = options;
 
   logger.info("Creating backup tarball", {
@@ -161,7 +162,7 @@ export async function createBackupTarball(options: {
   const result = {
     path: outputPath,
     sizeBytes: stats.size,
-    fileCount: paths.filter((p) => p).length, // Count of paths that were included
+    inputPathCount: paths.filter((p) => p).length, // Count of input directory paths
   };
 
   logger.info("Backup tarball created", result);
@@ -280,6 +281,10 @@ export async function decryptFile(
 
     await inputHandle.read(headerLengthBuffer, 0, 4, 0);
     const headerLength = headerLengthBuffer.readUInt32LE(0);
+
+    if (headerLength > 65536) {
+      throw new EncryptionError("Header too large");
+    }
 
     const headerBuffer = Buffer.alloc(headerLength);
     await inputHandle.read(headerBuffer, 0, headerLength, 4);
@@ -423,7 +428,7 @@ export async function listBackups(config: S3StorageConfig): Promise<BackupEntry[
 
   try {
     let continuationToken: string | undefined;
-    const allObjects: unknown[] = [];
+    const allObjects: _Object[] = [];
 
     do {
       const command = new ListObjectsV2Command({
@@ -441,7 +446,8 @@ export async function listBackups(config: S3StorageConfig): Promise<BackupEntry[
 
     // Filter to valid objects first
     const validObjects = allObjects.filter(
-      (obj) => obj.Key && obj.LastModified && obj.Size !== undefined,
+      (obj): obj is _Object & { Key: string; LastModified: Date; Size: number } =>
+        Boolean(obj.Key && obj.LastModified && obj.Size !== undefined),
     );
 
     // Fetch metadata in parallel with chunk-based concurrency (10 at a time)

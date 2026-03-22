@@ -97,7 +97,7 @@ export class BackupScheduler {
     } catch (error: unknown) {
       const errorMessage = formatErrorMessage(error);
       this.status.lastError = errorMessage;
-      log.error("backup failed:", errorMessage);
+      log.error(`backup failed: ${errorMessage}`);
 
       // Emit system event for failures if configured
       if (backupCfg.notifyOnFailure !== false) {
@@ -166,7 +166,7 @@ export class BackupScheduler {
       return ms;
     } catch (error: unknown) {
       const message = formatErrorMessage(error);
-      log.warn(`failed to parse schedule "${schedule}":`, message);
+      log.warn(`failed to parse schedule "${schedule}": ${message}`);
       return null;
     }
   }

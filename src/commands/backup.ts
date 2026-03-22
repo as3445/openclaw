@@ -4,13 +4,13 @@ import path from "node:path";
 import type { Command } from "commander";
 import { withProgress } from "../cli/progress.js";
 import { loadConfig, type OpenClawConfig } from "../config/config.js";
+import { downloadBackup, listBackups, restoreBackup } from "../infra/backup-core.js";
 import {
   createBackupArchive,
   formatBackupCreateSummary,
   type BackupCreateOptions,
   type BackupCreateResult,
 } from "../infra/backup-create.js";
-import { downloadBackup, listBackups, restoreBackup } from "../infra/backup-core.js";
 import { getBackupScheduler } from "../infra/backup-scheduler.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -218,21 +218,22 @@ async function backupListCommand(
 
     runtime.log(`Found ${backups.length} backup${backups.length === 1 ? "" : "s"}:\n`);
 
-    const rows = backups.map((backup) => [
-      backup.key,
-      formatBytes(backup.sizeBytes),
-      formatTimeAgo(backup.lastModified),
-    ]);
+    const rows = backups.map((backup) => ({
+      Key: backup.key,
+      Size: formatBytes(backup.sizeBytes),
+      Age: formatTimeAgo(Date.now() - backup.lastModified.getTime()),
+    }));
 
     const table = renderTable({
-      headers: ["Key", "Size", "Age"],
+      columns: [
+        { key: "Key", header: "Key" },
+        { key: "Size", header: "Size" },
+        { key: "Age", header: "Age" },
+      ],
       rows,
-      style: "simple",
     });
 
-    for (const line of table) {
-      runtime.log(line);
-    }
+    runtime.log(table);
   }
 }
 
@@ -327,20 +328,20 @@ async function backupStatusCommand(
     );
   } else {
     runtime.log(`${theme.accent("Backup Status")}:`);
-    runtime.log(`  Enabled: ${status.enabled ? theme.success("Yes") : theme.dim("No")}`);
-    runtime.log(`  Schedule: ${status.schedule || theme.dim("Not set")}`);
+    runtime.log(`  Enabled: ${status.enabled ? theme.success("Yes") : theme.muted("No")}`);
+    runtime.log(`  Schedule: ${status.schedule || theme.muted("Not set")}`);
 
     if (status.lastBackupTime) {
-      runtime.log(`  Last backup: ${formatTimeAgo(new Date(status.lastBackupTime))}`);
+      runtime.log(`  Last backup: ${formatTimeAgo(Date.now() - status.lastBackupTime)}`);
       if (status.lastBackupSize) {
         runtime.log(`  Last backup size: ${formatBytes(status.lastBackupSize)}`);
       }
     } else {
-      runtime.log(`  Last backup: ${theme.dim("Never")}`);
+      runtime.log(`  Last backup: ${theme.muted("Never")}`);
     }
 
     if (status.nextScheduledTime) {
-      runtime.log(`  Next backup: ${formatTimeAgo(new Date(status.nextScheduledTime))}`);
+      runtime.log(`  Next backup: ${formatTimeAgo(Date.now() - status.nextScheduledTime)}`);
     }
 
     if (status.lastError) {

@@ -120,7 +120,7 @@ describe("backup-core", () => {
 
       expect(result.path).toBe(outputPath);
       expect(result.sizeBytes).toBeGreaterThan(0);
-      expect(result.fileCount).toBeGreaterThan(0);
+      expect(result.inputPathCount).toBeGreaterThan(0);
 
       // Verify file exists
       const stats = await fs.stat(outputPath);
@@ -218,7 +218,7 @@ describe("backup-core", () => {
         outputPath,
       });
 
-      expect(result.fileCount).toBeGreaterThan(1);
+      expect(result.inputPathCount).toBeGreaterThan(1);
 
       // Verify both directories are included
       const extractDir = await makeTempDir("extract-extras");
@@ -463,7 +463,7 @@ describe("backup-core", () => {
       });
 
       s3Mock.on(GetObjectCommand).resolves({
-        Body: mockStream,
+        Body: mockStream as unknown as import("@smithy/types").StreamingBlobPayloadOutputTypes,
       });
 
       await downloadBackup(mockConfig, "test-backup/remote.tar.gz", outputPath);
