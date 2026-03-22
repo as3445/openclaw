@@ -5,11 +5,12 @@ import {
   S3Client,
   ListObjectsV2Command,
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import { mockClient } from "aws-sdk-client-mock";
 import * as tar from "tar";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createBackupTarball,
   encryptFile,
@@ -37,9 +38,15 @@ vi.mock("../logging/subsystem.js", () => ({
 const s3Mock = mockClient(S3Client);
 
 vi.mock("@aws-sdk/lib-storage", () => ({
-  Upload: vi.fn().mockImplementation(() => ({
-    done: vi.fn().mockResolvedValue({ ETag: "mock-etag" }),
-  })),
+  Upload: class MockUpload {
+    private params: unknown;
+    constructor(opts: unknown) {
+      this.params = opts;
+    }
+    async done() {
+      return { ETag: "mock-etag" };
+    }
+  },
 }));
 
 let fixtureRoot = "";
@@ -67,6 +74,14 @@ async function createTestDirectory(
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(fullPath, content, "utf8");
   }
+}
+
+/**
+ * Helper: resolve the extraction path for a directory packed via absolute path.
+ * `tar` strips the leading "/" so /tmp/foo becomes tmp/foo inside the archive.
+ */
+function extractedPath(extractDir: string, absoluteSrcDir: string, ...rest: string[]): string {
+  return path.join(extractDir, absoluteSrcDir.substring(1), ...rest);
 }
 
 beforeAll(async () => {
@@ -97,7 +112,7 @@ describe("backup-core", () => {
         "skills/test-skill/SKILL.md": "# Test Skill",
       });
 
-      await createBackupTarball({
+      const result = await createBackupTarball({
         stateDir,
         workspaceDir,
         outputPath,
@@ -115,9 +130,10 @@ describe("backup-core", () => {
       const extractDir = await makeTempDir("extract");
       await tar.extract({ file: outputPath, cwd: extractDir });
 
-      // Check some files were extracted
+      // tar strips leading "/" from absolute paths, so the extracted path mirrors
+      // the original absolute path minus the root slash.
       const extractedConfig = await fs.readFile(
-        path.join(extractDir, path.basename(stateDir), "config.json"),
+        extractedPath(extractDir, stateDir, "config.json"),
         "utf8",
       );
       expect(JSON.parse(extractedConfig)).toEqual({ test: true });
@@ -145,7 +161,7 @@ describe("backup-core", () => {
       const extractDir = await makeTempDir("extract-exclusions");
       await tar.extract({ file: outputPath, cwd: extractDir });
 
-      const extractedBasePath = path.join(extractDir, path.basename(testDir));
+      const extractedBasePath = extractedPath(extractDir, testDir);
 
       // Should include these
       expect(
@@ -196,7 +212,7 @@ describe("backup-core", () => {
       await createTestFile(stateDir, "config.json", "{}");
       await createTestFile(extraDir, "extra.txt", "extra content");
 
-      await createBackupTarball({
+      const result = await createBackupTarball({
         stateDir,
         extraPaths: [extraDir],
         outputPath,
@@ -209,13 +225,13 @@ describe("backup-core", () => {
       await tar.extract({ file: outputPath, cwd: extractDir });
 
       expect(
-        await fs.access(path.join(extractDir, path.basename(stateDir), "config.json")).then(
+        await fs.access(extractedPath(extractDir, stateDir, "config.json")).then(
           () => true,
           () => false,
         ),
       ).toBe(true);
       expect(
-        await fs.access(path.join(extractDir, path.basename(extraDir), "extra.txt")).then(
+        await fs.access(extractedPath(extractDir, extraDir, "extra.txt")).then(
           () => true,
           () => false,
         ),
@@ -270,11 +286,66 @@ describe("backup-core", () => {
       const decryptedPath = path.join(fixtureRoot, "large-file-out.txt");
 
       await fs.writeFile(inputPath, largeContent, "utf8");
-      await encryptFile(inputPath, encryptedPath, "test-pass");
-      await decryptFile(encryptedPath, decryptedPath, "test-pass");
+      await encryptFile(inputPath, encryptedPath, "test-password-secure");
+      await decryptFile(encryptedPath, decryptedPath, "test-password-secure");
 
       const decryptedContent = await fs.readFile(decryptedPath, "utf8");
       expect(decryptedContent).toBe(largeContent);
+    });
+
+    it("rejects passphrase shorter than 12 characters", async () => {
+      const inputPath = path.join(fixtureRoot, "short-pass.txt");
+      const encryptedPath = path.join(fixtureRoot, "short-pass.enc");
+
+      await fs.writeFile(inputPath, "content", "utf8");
+
+      await expect(encryptFile(inputPath, encryptedPath, "short")).rejects.toThrow(
+        "Passphrase must be at least 12 characters long",
+      );
+    });
+
+    it("rejects empty passphrase", async () => {
+      const inputPath = path.join(fixtureRoot, "empty-pass.txt");
+      const encryptedPath = path.join(fixtureRoot, "empty-pass.enc");
+
+      await fs.writeFile(inputPath, "content", "utf8");
+
+      await expect(encryptFile(inputPath, encryptedPath, "")).rejects.toThrow(
+        "Passphrase must be at least 12 characters long",
+      );
+    });
+
+    it("throws on corrupted ciphertext (tampered auth tag)", async () => {
+      const inputPath = path.join(fixtureRoot, "tamper-input.txt");
+      const encryptedPath = path.join(fixtureRoot, "tamper-encrypted.enc");
+      const tamperedPath = path.join(fixtureRoot, "tamper-tampered.enc");
+      const decryptedPath = path.join(fixtureRoot, "tamper-decrypted.txt");
+      const passphrase = "secure-passphrase-for-tamper-test";
+
+      await fs.writeFile(inputPath, "sensitive data that must be authenticated", "utf8");
+      await encryptFile(inputPath, encryptedPath, passphrase);
+
+      // Read the encrypted file and tamper with the auth tag in the header
+      const encData = await fs.readFile(encryptedPath);
+      const headerLen = encData.readUInt32LE(0);
+      const headerJson = JSON.parse(encData.subarray(4, 4 + headerLen).toString("utf8"));
+
+      // Flip bits in the auth tag to simulate tampering
+      const originalTag = headerJson.tag;
+      const tamperedTag =
+        originalTag.substring(0, originalTag.length - 2) +
+        (originalTag.endsWith("00") ? "ff" : "00");
+      headerJson.tag = tamperedTag;
+
+      // Reconstruct the file with the tampered header
+      const newHeaderBuf = Buffer.from(JSON.stringify(headerJson), "utf8");
+      const newLenBuf = Buffer.alloc(4);
+      newLenBuf.writeUInt32LE(newHeaderBuf.length, 0);
+      const ciphertextPortion = encData.subarray(4 + headerLen);
+      const tampered = Buffer.concat([newLenBuf, newHeaderBuf, ciphertextPortion]);
+      await fs.writeFile(tamperedPath, tampered);
+
+      await expect(decryptFile(tamperedPath, decryptedPath, passphrase)).rejects.toThrow();
     });
   });
 
@@ -288,8 +359,8 @@ describe("backup-core", () => {
       prefix: "test-backup/",
     };
 
-    beforeAll(() => {
-      vi.clearAllMocks();
+    beforeEach(() => {
+      s3Mock.reset();
     });
 
     it("uploads a file to S3", async () => {
@@ -300,7 +371,9 @@ describe("backup-core", () => {
 
       const result = await uploadToS3(testFile, mockConfig);
 
-      expect(result.key).toMatch(/^test-backup\/.*-\d{4}-\d{2}-\d{2}-\d{6}\.tar\.gz$/);
+      expect(result.key).toMatch(
+        /^test-backup\/.*-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}.*\.tar\.gz$/,
+      );
       expect(result.etag).toBe("mock-etag");
       expect(result.sizeBytes).toBe(19); // length of "test backup content"
     });
@@ -422,7 +495,7 @@ describe("backup-core", () => {
       s3Mock
         .on(ListObjectsV2Command)
         .resolves({ Contents: mockObjects })
-        .on(GetObjectCommand)
+        .on(HeadObjectCommand)
         .resolves({ Metadata: { encrypted: "false" } })
         .on(DeleteObjectCommand)
         .resolves({});
@@ -454,7 +527,7 @@ describe("backup-core", () => {
       s3Mock
         .on(ListObjectsV2Command)
         .resolves({ Contents: mockObjects })
-        .on(GetObjectCommand)
+        .on(HeadObjectCommand)
         .resolves({ Metadata: { encrypted: "false" } })
         .on(DeleteObjectCommand)
         .resolves({});
@@ -467,6 +540,10 @@ describe("backup-core", () => {
   });
 
   describe("backup key naming format", () => {
+    beforeEach(() => {
+      s3Mock.reset();
+    });
+
     it("generates correct backup key format", async () => {
       const testFile = path.join(fixtureRoot, "naming-test.tar.gz");
       await fs.writeFile(testFile, "test", "utf8");
@@ -483,7 +560,9 @@ describe("backup-core", () => {
       const result = await uploadToS3(testFile, mockConfig);
 
       // Key should match: openclaw-backup/{hostname}-{YYYY-MM-DD-HHmmss}.tar.gz
-      expect(result.key).toMatch(/^openclaw-backup\/.*-\d{4}-\d{2}-\d{2}-\d{6}\.tar\.gz$/);
+      expect(result.key).toMatch(
+        /^openclaw-backup\/.*-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}.*\.tar\.gz$/,
+      );
     });
 
     it("uses custom prefix", async () => {
@@ -502,7 +581,9 @@ describe("backup-core", () => {
 
       const result = await uploadToS3(testFile, mockConfig);
 
-      expect(result.key).toMatch(/^custom-prefix\/.*-\d{4}-\d{2}-\d{2}-\d{6}\.tar\.gz$/);
+      expect(result.key).toMatch(
+        /^custom-prefix\/.*-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}.*\.tar\.gz$/,
+      );
     });
   });
 
@@ -524,9 +605,10 @@ describe("backup-core", () => {
       // Restore
       await restoreBackup({ backupPath, targetDir });
 
-      // Verify restoration
+      // tar strips leading "/" so the full directory structure is preserved
+      // minus the root slash.
       const restoredConfig = await fs.readFile(
-        path.join(targetDir, path.basename(sourceDir), "config.json"),
+        extractedPath(targetDir, sourceDir, "config.json"),
         "utf8",
       );
       expect(JSON.parse(restoredConfig)).toEqual({ restored: true });
@@ -551,7 +633,7 @@ describe("backup-core", () => {
 
       // Verify restoration
       const restoredContent = await fs.readFile(
-        path.join(targetDir, path.basename(sourceDir), "secret.txt"),
+        extractedPath(targetDir, sourceDir, "secret.txt"),
         "utf8",
       );
       expect(restoredContent).toBe("encrypted secret");

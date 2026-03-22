@@ -24,17 +24,16 @@ interface BackupStatus {
 export class BackupScheduler {
   private timer?: NodeJS.Timeout;
   private status: BackupStatus = {};
-  private cfg: OpenClawConfig;
+  private config: OpenClawConfig;
   private enabled = false;
-  // Important Fix #4: Add concurrent backup protection
   private backupInProgress = false;
 
   constructor(config: OpenClawConfig) {
-    this.cfg = config;
+    this.config = config;
   }
 
   start(): void {
-    const backupCfg = this.cfg.backup;
+    const backupCfg = this.config.backup;
     if (!backupCfg?.enabled) {
       log.info("backup disabled, skipping scheduler start");
       return;
@@ -76,7 +75,7 @@ export class BackupScheduler {
   }
 
   async runNow(): Promise<BackupResult> {
-    const backupCfg = this.cfg.backup;
+    const backupCfg = this.config.backup;
     if (!backupCfg) {
       throw new Error("backup configuration not found");
     }
@@ -116,13 +115,12 @@ export class BackupScheduler {
     return {
       ...this.status,
       enabled: this.enabled,
-      schedule: this.cfg.backup?.schedule,
+      schedule: this.config.backup?.schedule,
       inProgress: this.backupInProgress,
     };
   }
 
   private async runScheduledBackup(): Promise<void> {
-    // Important Fix #4: Add concurrent backup protection
     if (this.backupInProgress) {
       log.warn("backup already in progress, skipping scheduled run");
       return;
@@ -131,19 +129,20 @@ export class BackupScheduler {
     this.backupInProgress = true;
     try {
       await this.runNow();
+    } catch {
+      // Error handling already done in runNow()
+    } finally {
+      this.backupInProgress = false;
 
-      // Update next scheduled time
-      const backupCfg = this.cfg.backup;
+      // Always update nextScheduledTime — even after failures — so
+      // operators can see when the next attempt will occur.
+      const backupCfg = this.config.backup;
       if (backupCfg?.schedule) {
         const intervalMs = this.parseScheduleInterval(backupCfg.schedule);
         if (intervalMs) {
           this.status.nextScheduledTime = Date.now() + intervalMs;
         }
       }
-    } catch {
-      // Error handling already done in runNow()
-    } finally {
-      this.backupInProgress = false;
     }
   }
 
@@ -157,8 +156,8 @@ export class BackupScheduler {
       return null;
     }
 
-    // For now, we'll treat everything as a duration string
-    // TODO: Add cron expression support if needed
+    // Treat the schedule value as a duration string (e.g. "1d", "6h", "30m").
+    // Cron expressions are not supported; use system cron for advanced scheduling.
     try {
       const ms = parseDurationMs(trimmed, { defaultUnit: "h" });
       if (ms <= 0) {
@@ -176,9 +175,9 @@ export class BackupScheduler {
   reload(config: OpenClawConfig): void {
     const wasEnabled = this.enabled;
     this.stop();
-    this.cfg = config;
+    this.config = config;
 
-    if (wasEnabled || this.cfg.backup?.enabled) {
+    if (wasEnabled || this.config.backup?.enabled) {
       this.start();
     }
   }
@@ -187,8 +186,33 @@ export class BackupScheduler {
 // Global scheduler instance
 let globalScheduler: BackupScheduler | null = null;
 
+/**
+ * Returns the singleton BackupScheduler instance.
+ *
+ * **Important:** The singleton is created with the first config it receives.
+ * Subsequent calls compare the incoming config's backup settings (endpoint,
+ * bucket, schedule, enabled) against the cached config. When a material
+ * difference is detected the scheduler is stopped, discarded, and
+ * re-created with the new config so callers never receive stale settings.
+ */
 export function getBackupScheduler(config: OpenClawConfig): BackupScheduler {
-  if (!globalScheduler) {
+  if (globalScheduler) {
+    // Detect config drift and reinitialise when the backup-relevant
+    // settings have changed since the scheduler was first created.
+    const prev = globalScheduler["config"].backup;
+    const next = config.backup;
+    const changed =
+      prev?.enabled !== next?.enabled ||
+      prev?.schedule !== next?.schedule ||
+      prev?.storage?.endpoint !== next?.storage?.endpoint ||
+      prev?.storage?.bucket !== next?.storage?.bucket;
+
+    if (changed) {
+      log.info("backup config changed — reinitialising scheduler");
+      globalScheduler.stop();
+      globalScheduler = new BackupScheduler(config);
+    }
+  } else {
     globalScheduler = new BackupScheduler(config);
   }
   return globalScheduler;

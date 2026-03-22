@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Command } from "commander";
 import { withProgress } from "../cli/progress.js";
-import { loadConfig } from "../config/config.js";
+import { loadConfig, type OpenClawConfig } from "../config/config.js";
 import {
   createBackupArchive,
   formatBackupCreateSummary,
@@ -14,7 +14,7 @@ import { downloadBackup, listBackups, restoreBackup } from "../infra/backup-core
 import { getBackupScheduler } from "../infra/backup-scheduler.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import type { RuntimeEnv } from "../runtime.js";
+import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
 import { backupVerifyCommand } from "./backup-verify.js";
@@ -64,7 +64,7 @@ export function registerBackupCommands(program: Command): void {
     .description("Create a backup immediately")
     .option("--json", "Output machine-readable JSON")
     .action(async (opts) => {
-      await backupCommand("now", opts, {});
+      await backupCommand("now", opts, defaultRuntime);
     });
 
   backup
@@ -72,7 +72,7 @@ export function registerBackupCommands(program: Command): void {
     .description("List all backups in storage")
     .option("--json", "Output machine-readable JSON")
     .action(async (opts) => {
-      await backupCommand("list", opts, {});
+      await backupCommand("list", opts, defaultRuntime);
     });
 
   backup
@@ -81,7 +81,7 @@ export function registerBackupCommands(program: Command): void {
     .option("-t, --target-dir <dir>", "Target directory for restore")
     .option("--json", "Output machine-readable JSON")
     .action(async (key, opts) => {
-      await backupCommand("restore", { ...opts, key }, {});
+      await backupCommand("restore", { ...opts, key }, defaultRuntime);
     });
 
   backup
@@ -89,7 +89,7 @@ export function registerBackupCommands(program: Command): void {
     .description("Show backup status and configuration")
     .option("--json", "Output machine-readable JSON")
     .action(async (opts) => {
-      await backupCommand("status", opts, {});
+      await backupCommand("status", opts, defaultRuntime);
     });
 }
 
@@ -109,16 +109,16 @@ export async function backupCommand(
   switch (subcommand.toLowerCase()) {
     case "now":
     case "run":
-      await backupNowCommand(opts, runtime, json);
+      await backupNowCommand(cfg, opts, runtime, json);
       break;
     case "list":
-      await backupListCommand(opts, runtime, json);
+      await backupListCommand(cfg, opts, runtime, json);
       break;
     case "restore":
-      await backupRestoreCommand(opts, runtime, json);
+      await backupRestoreCommand(cfg, opts, runtime, json);
       break;
     case "status":
-      await backupStatusCommand(opts, runtime, json);
+      await backupStatusCommand(cfg, opts, runtime, json);
       break;
     default:
       throw new Error(
@@ -128,11 +128,11 @@ export async function backupCommand(
 }
 
 async function backupNowCommand(
+  cfg: OpenClawConfig,
   opts: BackupCommandOptions,
   runtime: RuntimeEnv,
   json: boolean,
 ): Promise<void> {
-  const cfg = loadConfig();
   const scheduler = getBackupScheduler(cfg);
 
   const run = async () => await scheduler.runNow();
@@ -169,11 +169,11 @@ async function backupNowCommand(
 }
 
 async function backupListCommand(
+  cfg: OpenClawConfig,
   opts: BackupCommandOptions,
   runtime: RuntimeEnv,
   json: boolean,
 ): Promise<void> {
-  const cfg = loadConfig();
   if (!cfg.backup?.storage) {
     throw new Error("backup storage configuration required");
   }
@@ -237,11 +237,11 @@ async function backupListCommand(
 }
 
 async function backupRestoreCommand(
+  cfg: OpenClawConfig,
   opts: BackupCommandOptions,
   runtime: RuntimeEnv,
   json: boolean,
 ): Promise<void> {
-  const cfg = loadConfig();
   if (!cfg.backup?.storage) {
     throw new Error("backup storage configuration required");
   }
@@ -300,11 +300,11 @@ async function backupRestoreCommand(
 }
 
 async function backupStatusCommand(
+  cfg: OpenClawConfig,
   opts: BackupCommandOptions,
   runtime: RuntimeEnv,
   json: boolean,
 ): Promise<void> {
-  const cfg = loadConfig();
   const scheduler = getBackupScheduler(cfg);
   const status = scheduler.getStatus();
 
@@ -355,8 +355,8 @@ function formatBytes(bytes: number): string {
   }
 
   const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const sizes = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
 
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }

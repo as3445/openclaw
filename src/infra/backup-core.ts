@@ -56,7 +56,6 @@ interface EncryptionHeader {
   };
 }
 
-// Critical Fix #2: Safe JSON parsing with Zod validation
 const EncryptionHeaderSchema = z.object({
   version: z.literal("1"),
   algorithm: z.literal("aes-256-gcm"),
@@ -65,12 +64,11 @@ const EncryptionHeaderSchema = z.object({
   tag: z.string().regex(/^[0-9a-f]{32}$/),
   keyDerivation: z.object({
     algorithm: z.literal("pbkdf2"),
-    iterations: z.number().int().min(10000).max(1000000),
+    iterations: z.number().int().min(100000).max(1000000),
     hash: z.literal("sha512"),
   }),
 });
 
-// Important Fix #5: Passphrase validation
 function validatePassphrase(passphrase: string): void {
   if (!passphrase || passphrase.length < 12) {
     throw new EncryptionError("Passphrase must be at least 12 characters long");
@@ -80,6 +78,31 @@ function validatePassphrase(passphrase: string): void {
 const DEFAULT_PREFIX = "openclaw-backup/";
 const ENCRYPTION_ITERATIONS = 100000;
 const EXCLUDE_PATTERNS = [/node_modules$/, /\.git$/, /\.sqlite-wal$/, /\.sqlite-shm$/];
+
+/**
+ * Module-level S3Client cache keyed by "endpoint|bucket" so we reuse
+ * clients across calls instead of constructing a new instance per
+ * invocation of listBackups, downloadBackup, etc.
+ */
+const s3ClientCache = new Map<string, S3Client>();
+
+function getOrCreateS3Client(config: S3StorageConfig): S3Client {
+  const cacheKey = `${config.endpoint}|${config.bucket}`;
+  let client = s3ClientCache.get(cacheKey);
+  if (!client) {
+    client = new S3Client({
+      endpoint: config.endpoint,
+      region: config.region ?? "us-east-1",
+      credentials: {
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+      },
+      forcePathStyle: true,
+    });
+    s3ClientCache.set(cacheKey, client);
+  }
+  return client;
+}
 
 /**
  * Creates a .tar.gz archive of the specified directories using Node streams
@@ -108,7 +131,7 @@ export async function createBackupTarball(options: {
       if (!stat.isDirectory()) {
         throw new Error(`Path is not a directory: ${dirPath}`);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       logger.warn(`Skipping non-existent path: ${dirPath}`, { error: String(error) });
     }
   }
@@ -155,7 +178,6 @@ export async function encryptFile(
 ): Promise<{ iv: string; salt: string; tag: string }> {
   logger.info("Encrypting file", { inputPath, outputPath });
 
-  // Important Fix #5: Validate passphrase
   validatePassphrase(passphrase);
 
   const salt = randomBytes(32);
@@ -167,10 +189,7 @@ export async function encryptFile(
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(Buffer.from("openclaw-backup"));
 
-  // Critical Fix #3: Add comprehensive temp file cleanup
   const tempPath = `${outputPath}.tmp`;
-  let _tempOutput: fs.FileHandle | undefined;
-  let finalOutput: fs.FileHandle | undefined;
 
   try {
     const input = createReadStream(inputPath);
@@ -202,17 +221,20 @@ export async function encryptFile(
     headerLength.writeUInt32LE(headerBuffer.length, 0);
 
     // Write final file: header length + header + encrypted data
-    finalOutput = await fs.open(outputPath, "w");
+    // Use a FileHandle only for writing the header, then close it before streaming
+    const finalOutput = await fs.open(outputPath, "w");
     await finalOutput.write(headerLength, 0);
     await finalOutput.write(headerBuffer, 0);
+    await finalOutput.close();
 
+    // Append encrypted data using a separate stream (no shared fd)
     const tempInput = createReadStream(tempPath);
     const finalFileStream = createWriteStream(outputPath, {
-      fd: finalOutput.fd,
+      flags: "r+",
       start: 4 + headerBuffer.length,
     });
 
-    await pipeline(tempInput, finalFileStream, { end: false });
+    await pipeline(tempInput, finalFileStream);
 
     const result = {
       iv: iv.toString("hex"),
@@ -220,7 +242,8 @@ export async function encryptFile(
       tag: tag.toString("hex"),
     };
 
-    logger.info("File encrypted successfully", result);
+    const statResult = await fs.stat(outputPath);
+    logger.info("File encrypted successfully", { outputPath, sizeBytes: statResult.size });
     return result;
   } catch (error) {
     const message = formatErrorMessage(error);
@@ -230,19 +253,10 @@ export async function encryptFile(
       error instanceof Error ? error : undefined,
     );
   } finally {
-    // Critical Fix #3: Ensure temp file cleanup in all cases
     try {
       await fs.unlink(tempPath);
     } catch {
       // Ignore cleanup errors - file may not exist
-    }
-
-    if (finalOutput) {
-      try {
-        await finalOutput.close();
-      } catch {
-        // Ignore close errors
-      }
     }
   }
 }
@@ -270,13 +284,11 @@ export async function decryptFile(
     const headerBuffer = Buffer.alloc(headerLength);
     await inputHandle.read(headerBuffer, 0, headerLength, 4);
 
-    // Critical Fix #2: Safe JSON parsing with Zod validation
     let header: EncryptionHeader;
     try {
       const parsedJson = JSON.parse(headerBuffer.toString("utf8"));
       header = EncryptionHeaderSchema.parse(parsedJson);
     } catch {
-      // Important Fix #7: Generic error message to prevent timing attacks
       throw new EncryptionError("Failed to decrypt backup file");
     }
 
@@ -302,7 +314,6 @@ export async function decryptFile(
     if (error instanceof EncryptionError) {
       throw error;
     }
-    // Important Fix #7: Generic error message for all decryption failures
     throw new EncryptionError("Failed to decrypt backup file");
   } finally {
     if (inputHandle) {
@@ -339,15 +350,7 @@ export async function uploadToS3(
     endpoint: config.endpoint,
   });
 
-  const s3Client = new S3Client({
-    endpoint: config.endpoint,
-    region: config.region ?? "us-east-1",
-    credentials: {
-      accessKeyId: config.accessKeyId,
-      secretAccessKey: config.secretAccessKey,
-    },
-    forcePathStyle: true, // Required for non-AWS S3-compatible services
-  });
+  const s3Client = getOrCreateS3Client(config);
 
   try {
     const fileStream = createReadStream(filePath);
@@ -382,7 +385,7 @@ export async function uploadToS3(
     const message = formatErrorMessage(error);
     logger.error("S3 upload failed", { message });
 
-    // Nice-to-have Fix #9: Better S3 error handling
+    // Map specific S3 error codes to descriptive messages
     const s3Error = error instanceof Error ? error : undefined;
     const errorName = s3Error?.name;
 
@@ -416,18 +419,9 @@ export async function listBackups(config: S3StorageConfig): Promise<BackupEntry[
 
   logger.info("Listing backups", { bucket: config.bucket, prefix });
 
-  const s3Client = new S3Client({
-    endpoint: config.endpoint,
-    region: config.region ?? "us-east-1",
-    credentials: {
-      accessKeyId: config.accessKeyId,
-      secretAccessKey: config.secretAccessKey,
-    },
-    forcePathStyle: true,
-  });
+  const s3Client = getOrCreateS3Client(config);
 
   try {
-    // Critical Fix #1: Add S3 pagination for listBackups()
     let continuationToken: string | undefined;
     const allObjects: unknown[] = [];
 
@@ -445,40 +439,47 @@ export async function listBackups(config: S3StorageConfig): Promise<BackupEntry[
 
     const backups: BackupEntry[] = [];
 
-    for (const obj of allObjects) {
-      if (!obj.Key || !obj.LastModified || obj.Size === undefined) {
-        continue;
-      }
+    // Filter to valid objects first
+    const validObjects = allObjects.filter(
+      (obj) => obj.Key && obj.LastModified && obj.Size !== undefined,
+    );
 
-      // Get object metadata
-      const headCommand = new HeadObjectCommand({
-        Bucket: config.bucket,
-        Key: obj.Key,
-      });
-
-      try {
-        const objResponse = await s3Client.send(headCommand);
-        const metadata = objResponse.Metadata || {};
-
-        backups.push({
-          key: obj.Key,
-          lastModified: obj.LastModified,
-          sizeBytes: obj.Size,
-          encrypted: metadata.encrypted === "true",
-          hostname: metadata.hostname,
-          openclawVersion: metadata["openclaw-version"],
-        });
-      } catch (error: unknown) {
-        const message = formatErrorMessage(error);
-        logger.warn(`Failed to get metadata for backup: ${obj.Key}`, { message });
-        // Add without metadata
-        backups.push({
-          key: obj.Key,
-          lastModified: obj.LastModified,
-          sizeBytes: obj.Size,
-          encrypted: obj.Key.endsWith(".enc"),
-        });
-      }
+    // Fetch metadata in parallel with chunk-based concurrency (10 at a time)
+    // to avoid the N+1 sequential HeadObjectCommand problem.
+    const CONCURRENCY = 10;
+    for (let i = 0; i < validObjects.length; i += CONCURRENCY) {
+      const chunk = validObjects.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        chunk.map(async (obj) => {
+          try {
+            const headCommand = new HeadObjectCommand({
+              Bucket: config.bucket,
+              Key: obj.Key,
+            });
+            const objResponse = await s3Client.send(headCommand);
+            const metadata = objResponse.Metadata || {};
+            return {
+              key: obj.Key,
+              lastModified: obj.LastModified,
+              sizeBytes: obj.Size,
+              encrypted: metadata.encrypted === "true",
+              hostname: metadata.hostname,
+              openclawVersion: metadata["openclaw-version"],
+            } as BackupEntry;
+          } catch (error: unknown) {
+            const message = formatErrorMessage(error);
+            logger.warn(`Failed to get metadata for backup: ${obj.Key}`, { message });
+            // Fall back to inferring metadata from the key
+            return {
+              key: obj.Key,
+              lastModified: obj.LastModified,
+              sizeBytes: obj.Size,
+              encrypted: obj.Key.endsWith(".enc"),
+            } as BackupEntry;
+          }
+        }),
+      );
+      backups.push(...results);
     }
 
     backups.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
@@ -489,22 +490,21 @@ export async function listBackups(config: S3StorageConfig): Promise<BackupEntry[
     const message = formatErrorMessage(error);
     logger.error("Failed to list backups", { message });
 
-    // Nice-to-have Fix #9: Better S3 error handling
-    if (error?.name === "NoSuchBucket") {
-      throw new S3Error(`S3 bucket '${config.bucket}' does not exist`, error.name, error);
-    } else if (error?.name === "AccessDenied") {
+    // Map specific S3 error codes to descriptive messages
+    const s3Error = error instanceof Error ? error : undefined;
+    const errorName = s3Error?.name;
+
+    if (errorName === "NoSuchBucket") {
+      throw new S3Error(`S3 bucket '${config.bucket}' does not exist`, errorName, s3Error);
+    } else if (errorName === "AccessDenied") {
       throw new S3Error(
         `Access denied to S3 bucket '${config.bucket}'. Check credentials and permissions.`,
-        error.name,
-        error,
+        errorName,
+        s3Error,
       );
     }
 
-    throw new S3Error(
-      `Failed to list backups: ${message}`,
-      error?.name,
-      error instanceof Error ? error : undefined,
-    );
+    throw new S3Error(`Failed to list backups: ${message}`, errorName, s3Error);
   }
 }
 
@@ -514,15 +514,7 @@ export async function listBackups(config: S3StorageConfig): Promise<BackupEntry[
 export async function deleteBackup(config: S3StorageConfig, key: string): Promise<void> {
   logger.info("Deleting backup", { bucket: config.bucket, key });
 
-  const s3Client = new S3Client({
-    endpoint: config.endpoint,
-    region: config.region ?? "us-east-1",
-    credentials: {
-      accessKeyId: config.accessKeyId,
-      secretAccessKey: config.secretAccessKey,
-    },
-    forcePathStyle: true,
-  });
+  const s3Client = getOrCreateS3Client(config);
 
   try {
     const command = new DeleteObjectCommand({
@@ -536,22 +528,21 @@ export async function deleteBackup(config: S3StorageConfig, key: string): Promis
     const message = formatErrorMessage(error);
     logger.error("Failed to delete backup", { key, message });
 
-    // Nice-to-have Fix #9: Better S3 error handling
-    if (error?.name === "NoSuchBucket") {
-      throw new S3Error(`S3 bucket '${config.bucket}' does not exist`, error.name, error);
-    } else if (error?.name === "AccessDenied") {
+    // Map specific S3 error codes to descriptive messages
+    const s3Error = error instanceof Error ? error : undefined;
+    const errorName = s3Error?.name;
+
+    if (errorName === "NoSuchBucket") {
+      throw new S3Error(`S3 bucket '${config.bucket}' does not exist`, errorName, s3Error);
+    } else if (errorName === "AccessDenied") {
       throw new S3Error(
         `Access denied to S3 bucket '${config.bucket}'. Check credentials and permissions.`,
-        error.name,
-        error,
+        errorName,
+        s3Error,
       );
     }
 
-    throw new S3Error(
-      `Failed to delete backup: ${message}`,
-      error?.name,
-      error instanceof Error ? error : undefined,
-    );
+    throw new S3Error(`Failed to delete backup: ${message}`, errorName, s3Error);
   }
 }
 
@@ -565,15 +556,7 @@ export async function downloadBackup(
 ): Promise<void> {
   logger.info("Downloading backup", { bucket: config.bucket, key, outputPath });
 
-  const s3Client = new S3Client({
-    endpoint: config.endpoint,
-    region: config.region ?? "us-east-1",
-    credentials: {
-      accessKeyId: config.accessKeyId,
-      secretAccessKey: config.secretAccessKey,
-    },
-    forcePathStyle: true,
-  });
+  const s3Client = getOrCreateS3Client(config);
 
   try {
     const command = new GetObjectCommand({
@@ -604,28 +587,27 @@ export async function downloadBackup(
       throw error;
     }
 
-    // Nice-to-have Fix #9: Better S3 error handling
-    if (error?.name === "NoSuchBucket") {
-      throw new S3Error(`S3 bucket '${config.bucket}' does not exist`, error.name, error);
-    } else if (error?.name === "NoSuchKey") {
+    // Map specific S3 error codes to descriptive messages
+    const s3Error = error instanceof Error ? error : undefined;
+    const errorName = s3Error?.name;
+
+    if (errorName === "NoSuchBucket") {
+      throw new S3Error(`S3 bucket '${config.bucket}' does not exist`, errorName, s3Error);
+    } else if (errorName === "NoSuchKey") {
       throw new S3Error(
         `Backup file '${key}' not found in bucket '${config.bucket}'`,
-        error.name,
-        error,
+        errorName,
+        s3Error,
       );
-    } else if (error?.name === "AccessDenied") {
+    } else if (errorName === "AccessDenied") {
       throw new S3Error(
         `Access denied to S3 bucket '${config.bucket}'. Check credentials and permissions.`,
-        error.name,
-        error,
+        errorName,
+        s3Error,
       );
     }
 
-    throw new S3Error(
-      `Failed to download backup: ${message}`,
-      error?.name,
-      error instanceof Error ? error : undefined,
-    );
+    throw new S3Error(`Failed to download backup: ${message}`, errorName, s3Error);
   }
 }
 
@@ -777,8 +759,17 @@ async function getPassphraseFromKeyFile(keyFile?: string): Promise<string | unde
     return content.trim();
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
+    // Only return undefined for file-not-found; surface other IO errors
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      logger.warn(`Key file not found: ${keyFile}`, { message });
+      return undefined;
+    }
     logger.warn(`Failed to read key file: ${keyFile}`, { message });
-    return undefined;
+    throw new EncryptionError(`Unable to read encryption key file: ${keyFile}`);
   }
 }
 
@@ -790,7 +781,8 @@ export async function restoreBackup(options: {
   targetDir: string;
   passphrase?: string;
 }): Promise<void> {
-  const { backupPath, targetDir, passphrase } = options;
+  const { backupPath, passphrase } = options;
+  const targetDir = path.resolve(options.targetDir);
 
   logger.info("Restoring backup", { backupPath, targetDir });
 
@@ -820,11 +812,20 @@ export async function restoreBackup(options: {
       }
     }
 
-    // Extract tarball
+    // Extract tarball with path traversal protection
     await tar.extract({
       file: extractPath,
       cwd: targetDir,
       strip: 0, // Don't strip path components
+      filter: (entryPath: string) => {
+        // Prevent path traversal: resolve the entry against targetDir and ensure it stays within
+        const resolved = path.resolve(targetDir, entryPath);
+        if (!resolved.startsWith(targetDir + path.sep) && resolved !== targetDir) {
+          logger.warn("Blocked path traversal attempt in archive entry", { entryPath });
+          return false;
+        }
+        return true;
+      },
     });
 
     logger.info("Backup restored successfully");
@@ -838,7 +839,6 @@ export async function restoreBackup(options: {
       error instanceof Error ? error : undefined,
     );
   } finally {
-    // Critical Fix #3: Comprehensive temp file cleanup
     if (tempDir) {
       try {
         await fs.rm(tempDir, { recursive: true, force: true });
