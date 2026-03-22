@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { Command } from "commander";
 import { withProgress } from "../cli/progress.js";
 import { loadConfig } from "../config/config.js";
@@ -7,7 +10,7 @@ import {
   type BackupCreateOptions,
   type BackupCreateResult,
 } from "../infra/backup-create.js";
-import { listBackups, restoreBackup } from "../infra/backup-core.js";
+import { downloadBackup, listBackups, restoreBackup } from "../infra/backup-core.js";
 import { getBackupScheduler } from "../infra/backup-scheduler.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -254,16 +257,15 @@ async function backupRestoreCommand(
   }
 
   const run = async () => {
-    // First we need to download the backup, then restore it
-    // This is a simplified version - in real implementation, you'd download from S3 first
-    const backupPath = `/tmp/${key}`; // This would be the downloaded file
-    const passphrase = cfg.backup?.encryption?.passphrase;
-
-    return await restoreBackup({
-      backupPath,
-      targetDir,
-      passphrase,
-    });
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-restore-"));
+    try {
+      const tmpFile = path.join(tmpDir, path.basename(key));
+      await downloadBackup(cfg.backup!.storage, key, tmpFile);
+      const passphrase = cfg.backup?.encryption?.passphrase;
+      return await restoreBackup({ backupPath: tmpFile, targetDir, passphrase });
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
   };
 
   const _result = json

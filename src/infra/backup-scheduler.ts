@@ -95,7 +95,7 @@ export class BackupScheduler {
 
       log.info(`backup completed successfully: ${result.key} (${result.sizeBytes} bytes)`);
       return result;
-    } catch {
+    } catch (error: unknown) {
       const errorMessage = formatErrorMessage(error);
       this.status.lastError = errorMessage;
       log.error("backup failed:", errorMessage);
@@ -165,7 +165,7 @@ export class BackupScheduler {
         return null;
       }
       return ms;
-    } catch {
+    } catch (error: unknown) {
       const message = formatErrorMessage(error);
       log.warn(`failed to parse schedule "${schedule}":`, message);
       return null;

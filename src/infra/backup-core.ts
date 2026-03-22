@@ -298,7 +298,7 @@ export async function decryptFile(
     await pipeline(encryptedDataStream, decipher, output);
 
     logger.info("File decrypted successfully");
-  } catch {
+  } catch (error: unknown) {
     if (error instanceof EncryptionError) {
       throw error;
     }
@@ -468,7 +468,7 @@ export async function listBackups(config: S3StorageConfig): Promise<BackupEntry[
           hostname: metadata.hostname,
           openclawVersion: metadata["openclaw-version"],
         });
-      } catch {
+      } catch (error: unknown) {
         const message = formatErrorMessage(error);
         logger.warn(`Failed to get metadata for backup: ${obj.Key}`, { message });
         // Add without metadata
@@ -666,7 +666,7 @@ export async function pruneBackups(
   for (const key of toDelete) {
     try {
       await deleteBackup(config, key);
-    } catch {
+    } catch (error: unknown) {
       const message = formatErrorMessage(error);
       logger.error(`Failed to delete backup: ${key}`, { message });
     }
@@ -775,7 +775,7 @@ async function getPassphraseFromKeyFile(keyFile?: string): Promise<string | unde
   try {
     const content = await fs.readFile(keyFile, "utf-8");
     return content.trim();
-  } catch {
+  } catch (error: unknown) {
     const message = formatErrorMessage(error);
     logger.warn(`Failed to read key file: ${keyFile}`, { message });
     return undefined;
@@ -812,7 +812,7 @@ export async function restoreBackup(options: {
 
       try {
         await decryptFile(backupPath, extractPath, passphrase);
-      } catch {
+      } catch (error: unknown) {
         throw new BackupError(
           `Failed to decrypt backup: ${formatErrorMessage(error)}`,
           error instanceof Error ? error : undefined,
@@ -828,7 +828,7 @@ export async function restoreBackup(options: {
     });
 
     logger.info("Backup restored successfully");
-  } catch {
+  } catch (error: unknown) {
     if (error instanceof BackupError) {
       throw error;
     }
