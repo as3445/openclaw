@@ -1020,6 +1020,17 @@ export async function startGatewayServer(
     }
   }
 
+  // Initialize policy feedback subsystem (passive observer, non-critical)
+  let policyFeedbackShutdown: (() => void) | undefined;
+  if (!minimalTestGateway) {
+    void import("../policy-feedback/init.js")
+      .then(({ initializePolicyFeedback }) => initializePolicyFeedback({ agentId: defaultAgentId }))
+      .then((handle) => {
+        policyFeedbackShutdown = handle.shutdown;
+      })
+      .catch(() => {});
+  }
+
   const stopModelPricingRefresh =
     !minimalTestGateway && process.env.VITEST !== "1"
       ? startGatewayModelPricingRefresh({ config: cfgAtStart })
@@ -1349,6 +1360,7 @@ export async function startGatewayServer(
       }
       // Stop the backup scheduler so in-flight backups are not abandoned.
       stopBackupScheduler();
+      policyFeedbackShutdown?.();
       if (skillsRefreshTimer) {
         clearTimeout(skillsRefreshTimer);
         skillsRefreshTimer = null;
