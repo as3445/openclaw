@@ -250,11 +250,14 @@ export class PolicyFeedbackEngineImpl implements PolicyFeedbackEngine {
       // Score via ranker
       const scored = await this.ranker.rankCandidates(input);
 
-      // Apply constraints
+      // Apply constraints (pass aggregate stats for data-dependent rules like low_effectiveness)
       const flags = featureFlagsForMode(this.config.mode);
       let result = scored;
       if (flags.enableConstraints) {
-        result = this.constraints.applyConstraints(scored, input.context);
+        const aggregatesList = await this.aggregates.getAggregates();
+        result = this.constraints.applyConstraints(scored, input.context, {
+          stats: aggregatesList[0],
+        });
       }
 
       // Check if no-op is preferred by the constraint layer
@@ -482,7 +485,10 @@ export class PolicyFeedbackEngineImpl implements PolicyFeedbackEngine {
       const flags = featureFlagsForMode(this.config.mode);
       let constrained = [result];
       if (flags.enableConstraints) {
-        constrained = this.constraints.applyConstraints([result], context);
+        const aggregatesList = await this.aggregates.getAggregates();
+        constrained = this.constraints.applyConstraints([result], context, {
+          stats: aggregatesList[0],
+        });
       }
       const final = constrained[0] ?? result;
 

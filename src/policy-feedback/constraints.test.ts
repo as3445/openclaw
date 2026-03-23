@@ -10,6 +10,7 @@ import {
   evaluateCondition,
 } from "./constraints.js";
 import type {
+  AggregateStats,
   CandidateAction,
   ConstraintRule,
   PolicyContext,
@@ -289,12 +290,76 @@ describe("evaluateCondition", () => {
     expect(evaluateCondition({ type: "min_interval", minMs: 5000 }, ctx)).toBe(false);
   });
 
-  it("low_effectiveness: returns false (requires external data)", () => {
+  it("low_effectiveness: returns false when no stats provided", () => {
     const ctx = makeContext();
     expect(
       evaluateCondition(
         { type: "low_effectiveness", threshold: 0.3, actionType: "agent_reply" },
         ctx,
+      ),
+    ).toBe(false);
+  });
+
+  it("low_effectiveness: triggers when reply rate is below threshold", () => {
+    const ctx = makeContext();
+    const stats: AggregateStats = {
+      computedAt: new Date().toISOString(),
+      totalActions: 50,
+      totalOutcomes: 40,
+      byActionType: {
+        agent_reply: { count: 50, outcomeCount: 40, replyRate: 0.2, suppressionRate: 0 },
+      },
+      byHourOfDay: {},
+      byConsecutiveIgnores: {},
+      byChannel: {},
+    };
+    expect(
+      evaluateCondition(
+        { type: "low_effectiveness", threshold: 0.3, actionType: "agent_reply" },
+        ctx,
+        stats,
+      ),
+    ).toBe(true);
+  });
+
+  it("low_effectiveness: does not trigger when reply rate meets threshold", () => {
+    const ctx = makeContext();
+    const stats: AggregateStats = {
+      computedAt: new Date().toISOString(),
+      totalActions: 50,
+      totalOutcomes: 40,
+      byActionType: {
+        agent_reply: { count: 50, outcomeCount: 40, replyRate: 0.5, suppressionRate: 0 },
+      },
+      byHourOfDay: {},
+      byConsecutiveIgnores: {},
+      byChannel: {},
+    };
+    expect(
+      evaluateCondition(
+        { type: "low_effectiveness", threshold: 0.3, actionType: "agent_reply" },
+        ctx,
+        stats,
+      ),
+    ).toBe(false);
+  });
+
+  it("low_effectiveness: returns false when action type has no data", () => {
+    const ctx = makeContext();
+    const stats: AggregateStats = {
+      computedAt: new Date().toISOString(),
+      totalActions: 10,
+      totalOutcomes: 5,
+      byActionType: {},
+      byHourOfDay: {},
+      byConsecutiveIgnores: {},
+      byChannel: {},
+    };
+    expect(
+      evaluateCondition(
+        { type: "low_effectiveness", threshold: 0.3, actionType: "agent_reply" },
+        ctx,
+        stats,
       ),
     ).toBe(false);
   });

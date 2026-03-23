@@ -8,6 +8,7 @@
 
 import { featureFlagsForMode } from "./config.js";
 import type {
+  AggregateStats,
   ConstraintCondition,
   ConstraintRule,
   PolicyContext,
@@ -161,8 +162,9 @@ export function applyCustomConstraint(
   candidates: ScoredCandidate[],
   rule: ConstraintRule,
   context: PolicyContext,
+  stats?: AggregateStats,
 ): ScoredCandidate[] {
-  const triggered = evaluateCondition(rule.condition, context);
+  const triggered = evaluateCondition(rule.condition, context, stats);
   if (!triggered) {
     return candidates;
   }
@@ -189,8 +191,13 @@ export function applyCustomConstraint(
 
 /**
  * Evaluate whether a constraint condition is triggered given the context.
+ * Pass aggregate stats to enable data-dependent conditions like low_effectiveness.
  */
-export function evaluateCondition(condition: ConstraintCondition, context: PolicyContext): boolean {
+export function evaluateCondition(
+  condition: ConstraintCondition,
+  context: PolicyContext,
+  stats?: AggregateStats,
+): boolean {
   switch (condition.type) {
     case "max_actions_per_period": {
       const count = context.recentActionCount ?? 0;
@@ -219,9 +226,14 @@ export function evaluateCondition(condition: ConstraintCondition, context: Polic
       return elapsed < condition.minMs;
     }
     case "low_effectiveness": {
-      // This condition requires aggregate data which isn't in PolicyContext;
-      // it is evaluated externally. Return false here as a safe default.
-      return false;
+      if (!stats) {
+        return false; // No aggregate data available — safe default
+      }
+      const typeStats = stats.byActionType[condition.actionType];
+      if (!typeStats || typeStats.count === 0) {
+        return false; // No data for this action type yet
+      }
+      return typeStats.replyRate < condition.threshold;
     }
   }
 }
@@ -244,7 +256,7 @@ export class ConstraintLayer {
   applyConstraints(
     candidates: ScoredCandidate[],
     context: PolicyContext,
-    options?: { overallConfidence?: number },
+    options?: { overallConfidence?: number; stats?: AggregateStats },
   ): ScoredCandidate[] {
     const flags = featureFlagsForMode(this.config.mode);
     if (!flags.enableConstraints) {
@@ -269,7 +281,7 @@ export class ConstraintLayer {
     // (e) Custom constraint rules sorted by priority (lower = higher priority)
     const sortedRules = [...this.config.constraints].toSorted((a, b) => a.priority - b.priority);
     for (const rule of sortedRules) {
-      result = applyCustomConstraint(result, rule, context);
+      result = applyCustomConstraint(result, rule, context, options?.stats);
     }
 
     return result;
