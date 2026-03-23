@@ -82,13 +82,13 @@ export async function initializePolicyFeedback(options: {
       agentId: options.agentId,
     });
 
-    // Schedule periodic aggregate recomputation and log retention pruning.
-    // Uses the config's aggregateIntervalMs (default 1 hour) and logRetentionDays (default 90).
-    const debugInfo = engine.getDebugInfo();
+    // Schedule periodic aggregate recomputation and log retention pruning
+    // using the resolved config values (not hardcoded defaults).
+    const resolvedConfig = engine.getResolvedConfig();
     const stopMaintenance = startMaintenanceTimer(
       engine,
-      debugInfo.featureFlags.enableRanking ? 3_600_000 : 86_400_000, // 1h if active, 24h if passive
-      90, // logRetentionDays default
+      resolvedConfig.aggregateIntervalMs,
+      resolvedConfig.logRetentionDays,
     );
 
     return {

@@ -1235,10 +1235,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                               },
                               {
                                 type: "string",
-                                const: "openrouter",
-                              },
-                              {
-                                type: "string",
                                 const: "zai",
                               },
                               {
@@ -3409,17 +3405,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                     },
                   ],
                 },
-                thinkingDefault: {
-                  type: "string",
-                  enum: ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive"],
-                },
-                reasoningDefault: {
-                  type: "string",
-                  enum: ["on", "off", "stream"],
-                },
-                fastModeDefault: {
-                  type: "boolean",
-                },
                 skills: {
                   type: "array",
                   items: {
@@ -4711,9 +4696,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                           items: {
                             type: "string",
                           },
-                        },
-                        strictInlineEval: {
-                          type: "boolean",
                         },
                         safeBinTrustedDirs: {
                           type: "array",
@@ -7193,9 +7175,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                 items: {
                   type: "string",
                 },
-              },
-              strictInlineEval: {
-                type: "boolean",
               },
               safeBinTrustedDirs: {
                 type: "array",
@@ -9696,10 +9675,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                           type: "string",
                           const: "path",
                         },
-                        {
-                          type: "string",
-                          const: "clawhub",
-                        },
                       ],
                     },
                     spec: {
@@ -9734,40 +9709,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                     },
                     installedAt: {
                       type: "string",
-                    },
-                    clawhubUrl: {
-                      type: "string",
-                    },
-                    clawhubPackage: {
-                      type: "string",
-                    },
-                    clawhubFamily: {
-                      anyOf: [
-                        {
-                          type: "string",
-                          const: "code-plugin",
-                        },
-                        {
-                          type: "string",
-                          const: "bundle-plugin",
-                        },
-                      ],
-                    },
-                    clawhubChannel: {
-                      anyOf: [
-                        {
-                          type: "string",
-                          const: "official",
-                        },
-                        {
-                          type: "string",
-                          const: "community",
-                        },
-                        {
-                          type: "string",
-                          const: "private",
-                        },
-                      ],
                     },
                     hooks: {
                       type: "array",
@@ -11230,6 +11171,104 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
         },
         additionalProperties: false,
       },
+      backup: {
+        type: "object",
+        properties: {
+          enabled: {
+            type: "boolean",
+          },
+          schedule: {
+            type: "string",
+          },
+          include: {
+            type: "object",
+            properties: {
+              stateDir: {
+                type: "boolean",
+              },
+              workspace: {
+                type: "boolean",
+              },
+              extraPaths: {
+                type: "array",
+                items: {
+                  type: "string",
+                },
+              },
+            },
+            additionalProperties: false,
+          },
+          storage: {
+            type: "object",
+            properties: {
+              provider: {
+                type: "string",
+                const: "s3",
+              },
+              endpoint: {
+                type: "string",
+              },
+              bucket: {
+                type: "string",
+              },
+              region: {
+                type: "string",
+              },
+              accessKeyId: {
+                type: "string",
+              },
+              secretAccessKey: {
+                type: "string",
+              },
+              prefix: {
+                type: "string",
+              },
+            },
+            required: ["provider", "endpoint", "bucket", "accessKeyId", "secretAccessKey"],
+            additionalProperties: false,
+          },
+          encryption: {
+            type: "object",
+            properties: {
+              enabled: {
+                type: "boolean",
+              },
+              algorithm: {
+                type: "string",
+                const: "aes-256-gcm",
+              },
+              passphrase: {
+                type: "string",
+              },
+              keyFile: {
+                type: "string",
+              },
+            },
+            required: ["enabled", "algorithm"],
+            additionalProperties: false,
+          },
+          retention: {
+            type: "object",
+            properties: {
+              maxBackups: {
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+              },
+              maxAgeDays: {
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+          },
+          notifyOnFailure: {
+            type: "boolean",
+          },
+        },
+        additionalProperties: false,
+      },
       skills: {
         type: "object",
         properties: {
@@ -11531,10 +11570,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                           type: "string",
                           const: "path",
                         },
-                        {
-                          type: "string",
-                          const: "clawhub",
-                        },
                       ],
                     },
                     {
@@ -11575,40 +11610,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                 },
                 installedAt: {
                   type: "string",
-                },
-                clawhubUrl: {
-                  type: "string",
-                },
-                clawhubPackage: {
-                  type: "string",
-                },
-                clawhubFamily: {
-                  anyOf: [
-                    {
-                      type: "string",
-                      const: "code-plugin",
-                    },
-                    {
-                      type: "string",
-                      const: "bundle-plugin",
-                    },
-                  ],
-                },
-                clawhubChannel: {
-                  anyOf: [
-                    {
-                      type: "string",
-                      const: "official",
-                    },
-                    {
-                      type: "string",
-                      const: "community",
-                    },
-                    {
-                      type: "string",
-                      const: "private",
-                    },
-                  ],
                 },
                 marketplaceName: {
                   type: "string",
@@ -12090,21 +12091,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
     "agents.list[].runtime.acp.cwd": {
       label: "Agent ACP Working Directory",
       help: "Optional default working directory for this agent's ACP sessions.",
-      tags: ["advanced"],
-    },
-    "agents.list[].thinkingDefault": {
-      label: "Agent Thinking Default",
-      help: "Optional per-agent default thinking level. Overrides agents.defaults.thinkingDefault for this agent when no per-message or session override is set.",
-      tags: ["advanced"],
-    },
-    "agents.list[].reasoningDefault": {
-      label: "Agent Reasoning Default",
-      help: "Optional per-agent default reasoning visibility (on|off|stream). Applies when no per-message or session reasoning override is set.",
-      tags: ["advanced"],
-    },
-    "agents.list[].fastModeDefault": {
-      label: "Agent Fast Mode Default",
-      help: "Optional per-agent default for fast mode. Applies when no per-message or session fast-mode override is set.",
       tags: ["advanced"],
     },
     "agents.defaults": {
@@ -12797,11 +12783,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
     "tools.exec.safeBins": {
       label: "Exec Safe Bins",
       help: "Allow stdin-only safe binaries to run without explicit allowlist entries.",
-      tags: ["tools"],
-    },
-    "tools.exec.strictInlineEval": {
-      label: "Require Inline-Eval Approval",
-      help: "Require explicit approval for interpreter inline-eval forms such as `python -c`, `node -e`, `ruby -e`, or `osascript -e`. Prevents silent allowlist reuse and downgrades allow-always to ask-each-time for those forms.",
       tags: ["tools"],
     },
     "tools.exec.safeBinTrustedDirs": {
@@ -15405,26 +15386,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       help: "When true, Telegram bot replies marked as errors are sent silently (no notification sound). Default: false.",
       tags: ["network", "channels"],
     },
-    "channels.telegram.apiRoot": {
-      label: "Telegram API Root URL",
-      help: "Custom Telegram Bot API root URL. Use for self-hosted Bot API servers (https://github.com/tdlib/telegram-bot-api) or reverse proxies in regions where api.telegram.org is blocked.",
-      tags: ["network", "channels"],
-    },
-    "channels.telegram.autoTopicLabel": {
-      label: "Telegram Auto Topic Label",
-      help: "Auto-rename DM forum topics on first message using LLM. Default: true. Set to false to disable, or use object form { enabled: true, prompt: '...' } for custom prompt.",
-      tags: ["network", "channels"],
-    },
-    "channels.telegram.autoTopicLabel.enabled": {
-      label: "Telegram Auto Topic Label Enabled",
-      help: "Whether auto topic labeling is enabled. Default: true.",
-      tags: ["network", "channels"],
-    },
-    "channels.telegram.autoTopicLabel.prompt": {
-      label: "Telegram Auto Topic Label Prompt",
-      help: "Custom prompt for LLM-based topic naming. The user message is appended after the prompt.",
-      tags: ["network", "channels"],
-    },
     "channels.telegram.capabilities.inlineButtons": {
       label: "Telegram Inline Buttons",
       help: "Enable Telegram inline button components for supported command and interaction surfaces. Disable if your deployment needs plain-text-only compatibility behavior.",
@@ -16281,11 +16242,23 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       sensitive: true,
       tags: ["security", "auth", "network", "channels"],
     },
+    "backup.storage.accessKeyId": {
+      sensitive: true,
+      tags: ["security", "access"],
+    },
+    "backup.storage.secretAccessKey": {
+      sensitive: true,
+      tags: ["security", "auth", "access"],
+    },
+    "backup.encryption.passphrase": {
+      sensitive: true,
+      tags: ["security"],
+    },
     "skills.entries.*.apiKey": {
       sensitive: true,
       tags: ["security", "auth"],
     },
   },
-  version: "2026.3.22",
+  version: "2026.3.14",
   generatedAt: "2026-03-22T21:17:33.302Z",
 } as const satisfies BaseConfigSchemaResponse;

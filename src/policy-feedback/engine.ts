@@ -386,6 +386,11 @@ export class PolicyFeedbackEngineImpl implements PolicyFeedbackEngine {
     return this.config.mode;
   }
 
+  /** Read-only access to the resolved config for init/maintenance callers. */
+  getResolvedConfig(): Readonly<PolicyFeedbackConfig> {
+    return this.config;
+  }
+
   /**
    * Get debug info: a comprehensive snapshot of the engine's internal state.
    *
@@ -525,7 +530,7 @@ export class PolicyFeedbackEngineImpl implements PolicyFeedbackEngine {
       const result: { action: ActionRecord; outcomes: OutcomeRecord[] }[] = [];
 
       for (const action of actions) {
-        const outcomes = await this.outcomeTracker.getOutcomesForAction(action.id);
+        const outcomes = await this.outcomeTracker.getOutcomesForAction(action.id, action.agentId);
         result.push({ action, outcomes });
       }
 

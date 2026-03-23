@@ -67,12 +67,18 @@ export class OutcomeTracker {
    */
   async queryOutcomes(filter: {
     actionId?: string;
+    agentId?: string;
     since?: number;
     limit?: number;
   }): Promise<OutcomeRecord[]> {
     try {
-      // When filtering by actionId we don't know the agent, read global
-      const opts = { home: this.home };
+      // When perAgentScoping is enabled and an agentId is provided, read
+      // from the per-agent path (where logOutcome writes). Otherwise fall
+      // back to the global path.
+      const opts =
+        this.config.perAgentScoping && filter.agentId
+          ? { agentId: filter.agentId, home: this.home }
+          : { home: this.home };
       let outcomes = await readOutcomes(opts);
 
       if (filter.actionId !== undefined) {
@@ -96,9 +102,9 @@ export class OutcomeTracker {
 
   /**
    * Get all outcomes linked to a specific action.
-   * Convenience wrapper around queryOutcomes.
+   * Pass agentId when perAgentScoping is enabled to read from the correct path.
    */
-  async getOutcomesForAction(actionId: string): Promise<OutcomeRecord[]> {
-    return this.queryOutcomes({ actionId });
+  async getOutcomesForAction(actionId: string, agentId?: string): Promise<OutcomeRecord[]> {
+    return this.queryOutcomes({ actionId, agentId });
   }
 }
