@@ -15,7 +15,11 @@ import {
   createInternalHookEvent,
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
-import { clearPolicyFeedbackHookState, registerPolicyFeedbackHooks } from "./hooks.js";
+import {
+  clearPolicyFeedbackHookState,
+  pendingActions,
+  registerPolicyFeedbackHooks,
+} from "./hooks.js";
 import type { PolicyFeedbackEngine, PolicyMode } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -281,6 +285,45 @@ describe("policy-feedback hooks integration", () => {
   // -------------------------------------------------------------------------
   // Unsubscribe / cleanup
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // Background prune interval
+  // -------------------------------------------------------------------------
+
+  it("background interval prunes stale entries when no hook events fire", () => {
+    vi.useFakeTimers();
+
+    // Register a second hook instance to get a fresh interval.
+    const unsub2 = registerPolicyFeedbackHooks({
+      engine,
+      getMode: () => currentMode,
+      agentId: "agent-test",
+    });
+
+    // Inject a stale entry directly (older than MAX_PENDING_AGE_MS of 5 minutes).
+    pendingActions.set("stale-session", {
+      sessionKey: "stale-session",
+      channelId: "telegram",
+      from: "+1234",
+      receivedAt: Date.now() - 400_000, // 6.7 minutes ago — past the 5-min TTL
+      accountId: "acc-1",
+    });
+
+    // Verify the stale entry exists before pruning.
+    expect(pendingActions.has("stale-session")).toBe(true);
+
+    // Advance time past the prune interval so the background timer fires.
+    vi.advanceTimersByTime(301_000); // 5 min + 1 sec
+
+    // Run pending callbacks (the interval handler).
+    vi.runAllTimers();
+
+    // After the background prune, the stale entry should be gone.
+    expect(pendingActions.has("stale-session")).toBe(false);
+
+    vi.useFakeTimers.restore();
+    unsub2();
+  });
 
   it("unsubscribe removes hooks and clears state", async () => {
     unsub();

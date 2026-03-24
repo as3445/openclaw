@@ -521,7 +521,10 @@ export async function dispatchReplyFromConfig(params: {
           ctx.Provider ??
           "unknown";
         const effectiveSessionKey = sessionStoreEntry.sessionKey ?? sessionKey ?? "";
-        const policyAgentId = resolveSessionAgentId({ sessionKey: effectiveSessionKey, config: cfg });
+        const policyAgentId = resolveSessionAgentId({
+          sessionKey: effectiveSessionKey,
+          config: cfg,
+        });
         const hints = await bridge.getPolicyHintsSafe({
           agentId: policyAgentId,
           sessionKey: effectiveSessionKey,
@@ -534,6 +537,9 @@ export async function dispatchReplyFromConfig(params: {
             actionType: "suppressed",
             channelId: typeof channel === "string" ? channel : "unknown",
             contextSummary: "Reply suppressed by policy feedback",
+            // Log the intended action type so the engine learns what categories
+            // of actions tend to get suppressed (e.g. agent_reply vs. tool_call).
+            metadata: { suppressedActionType: "agent_reply" },
           });
           const counts = dispatcher.getQueuedCounts();
           recordProcessed("completed", { reason: "policy_feedback_suppress" });

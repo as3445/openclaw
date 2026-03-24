@@ -36,7 +36,8 @@ type PendingAction = {
   conversationId?: string;
 };
 
-const pendingActions = new Map<string, PendingAction>();
+/** Exported for testing. */
+export const pendingActions = new Map<string, PendingAction>();
 
 // Track recent confirmed actions for outcome correlation (user replied -> prior agent action)
 type ConfirmedAction = {
@@ -60,6 +61,12 @@ export const MAX_PENDING_PER_SESSION = 50;
 
 /** TTL for pending actions — entries older than this are stale (5 minutes). */
 export const MAX_PENDING_AGE_MS = 300_000;
+
+/** Interval for background stale-entry pruning (5 minutes). */
+const PRUNE_INTERVAL_MS = 300_000;
+
+/** Exported for testing. */
+export { PRUNE_INTERVAL_MS };
 
 /** Hard cap on total pendingActions map size to bound memory. */
 const MAX_TOTAL_PENDING = 1000;
@@ -284,9 +291,20 @@ export function registerPolicyFeedbackHooks(options: PolicyFeedbackHooksOptions)
   registerInternalHook("message:received", onReceived);
   registerInternalHook("message:sent", onSent);
 
+  // Background interval to prune stale entries even when no hook events fire.
+  // This ensures memory doesn't grow unbounded under low-traffic conditions.
+  const pruneInterval = setInterval(() => {
+    try {
+      pruneStalePendingActions();
+    } catch {
+      // Fire-and-forget: never disrupt the timer
+    }
+  }, PRUNE_INTERVAL_MS);
+
   return () => {
     unregisterInternalHook("message:received", onReceived);
     unregisterInternalHook("message:sent", onSent);
+    clearInterval(pruneInterval);
     // Clean up in-memory state
     pendingActions.clear();
     recentConfirmedActions.clear();
