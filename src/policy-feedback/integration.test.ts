@@ -315,13 +315,10 @@ describe("policy-feedback hooks integration", () => {
     // Advance time past the prune interval so the background timer fires.
     vi.advanceTimersByTime(301_000); // 5 min + 1 sec
 
-    // Run pending callbacks (the interval handler).
-    vi.runAllTimers();
-
     // After the background prune, the stale entry should be gone.
     expect(pendingActions.has("stale-session")).toBe(false);
 
-    vi.useFakeTimers.restore();
+    vi.useRealTimers();
     unsub2();
   });
 
