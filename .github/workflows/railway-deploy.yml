@@ -1,0 +1,37 @@
+name: Trigger Railway Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  trigger-deploy:
+    runs-on: ubuntu-latest
+    if: github.repository == 'as3445/openclaw'
+    concurrency:
+      group: railway-deploy
+      cancel-in-progress: true
+    steps:
+      - name: Push version bump to template repo
+        env:
+          OPENCLAW_SHA: ${{ github.sha }}
+        run: |
+          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/as3445/openclaw-railway-template.git /tmp/tpl
+          cd /tmp/tpl
+          git config user.email "nox@openclaw.ai"
+          git config user.name "Nox (CI)"
+          echo "${OPENCLAW_SHA}" > .openclaw-version
+          git add .openclaw-version
+          git diff --cached --quiet && echo "No change — skipping" && exit 0
+          git commit -m "deploy: openclaw ${OPENCLAW_SHA:0:8}"
+          git push
+
+      - name: Trigger Railway deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          npm install -g @railway/cli
+          # Set CACHE_BUST to force Railway to pull a fresh build context from
+          # the template repo. `railway redeploy` reuses the cached snapshot
+          # and won't pick up Dockerfile or repo changes.
+          railway variables set CACHE_BUST="$(date +%s)" --service OpenClaw
